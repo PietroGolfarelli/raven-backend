@@ -36,6 +36,8 @@ public class InMemoryStore {
         public String imageUrl;
         public String taxRateId;   // opzionale per ora
         public VisibleOn visibleOn = new VisibleOn();
+        public List<String> ingredients = new ArrayList<>();
+        public List<String> allergens = new ArrayList<>();
 
         public static class VisibleOn {
             public boolean pos = true;
@@ -74,10 +76,12 @@ public class InMemoryStore {
             p1.id = "prod-burger-classic";
             p1.categoryId = "cat-burger";
             p1.name = "Burger Classic";
-            p1.description = "Manzo, insalata, pomodoro";
+            p1.description = "hanburger wow";
             p1.price = 8.50;
             p1.imageUrl = null;
             p1.taxRateId = "tax-std";
+            p1.ingredients = Arrays.asList("Manzo", "insalata", "pomodoro");
+            p1.allergens = Collections.emptyList();
 
             Product p2 = new Product();
             p2.id = "prod-cola";
