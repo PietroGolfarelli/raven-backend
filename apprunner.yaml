@@ -1,0 +1,57 @@
+version: 1.0
+# Configurazione del servizio App Runner
+# Usa il Dockerfile per buildare l'immagine dell'app
+
+source:
+  image_repository:
+    # Usa "CONTAINER" per buildare l'immagine dal Dockerfile del repo
+    image_identifier: .
+    image_repository_type: CONTAINER
+    # Directory in cui si trova il Dockerfile
+    # Se il Dockerfile non è in root, specifica il path
+    dockerfile_path: src/main/docker/Dockerfile.jvm
+  auto_deployments_enabled: true
+
+instance_configuration:
+  cpu: 1024        # 1 vCPU
+  memory: 2048     # 2 GB RAM
+  # Puoi aumentare se necessario
+
+health_check_configuration:
+  protocol: HTTP
+  path: /q/health/ready
+  interval: 10           # secondi
+  timeout: 5             # secondi
+  healthy_threshold: 1
+  unhealthy_threshold: 5
+
+# Porta esposta dal container (coerente con la tua app)
+port: 8080
+
+# Variabili d’ambiente passate al container
+environment:
+  # Imposta il profilo, log level, ecc. Aggiungi ciò che ti serve
+  QUARKUS_HTTP_PORT: "8080"
+  QUARKUS_PROFILE: "prod"
+
+# Policy di autoscaling base (opzionale, default è gestito da App Runner)
+auto_scaling_configuration:
+  max_concurrency: 80       # richieste per istanza
+  min_size: 1               # minimo istanze
+  max_size: 5               # massimo istanze
+  # target_cpu_utilization_percentage: 70  # opzionale (solo con config gestite)
+
+# Log (App Runner invia i log ad una log destination gestita; se vuoi CloudWatch,
+# dovrai configurarlo lato console/IaC. Qui lasciamo defaults.)
+observability_configuration:
+  # placeholder per future integrazioni (es. OpenTelemetry/CloudWatch)
+  enabled: false
+
+# VPC connector (opzionale: se devi accedere a risorse in VPC privato)
+# vpc_connector:
+#   vpc_connector_arn: arn:aws:apprunner:eu-central-1:123456789012:vpcconnector/your-connector
+
+# Mapping di dominio personalizzato (gestiscilo da console o IaC; non nel file)
+# Certificates/ACM e Route53 in Terraform/console.
+
+# IAM role (execution role) e accesso a registry privati si configurano da console/IaC.
