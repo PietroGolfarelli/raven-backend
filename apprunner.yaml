@@ -8,21 +8,15 @@ source:
       type: BRANCH
       value: main
     code_configuration:
-      configuration_source: REPOSITORY
-      # Indichiamo che vogliamo buildare da Dockerfile
-      # App Runner (Source) riconosce "DockerfilePath" dentro "BuildCommand" solo se usa buildspec? No.
-      # Il campo supportato è "dockerfile_path" all'interno di "image_repository" quando si usa "CONTAINER".
-      # Quindi per source-based con Dockerfile, schema corretto è questo sotto:
-
-image_repository:
-  image_repository_type: CONTAINER
-  image_configuration:
-    port: 8080
-    runtime_environment_variables:
-      QUARKUS_HTTP_PORT: "8080"
-      QUARKUS_PROFILE: "prod"
-  # Path al Dockerfile nel repo
-  dockerfile_path: src/main/docker/Dockerfile.jvm
+      configuration_source: API
+      code_configuration_values:
+        runtime: CUSTOM
+        build_command: ./mvnw -B -DskipTests package -Dquarkus.package.type=uber-jar
+        start_command: java -jar target/*-runner.jar
+        port: 8080
+        runtime_environment_variables:
+          QUARKUS_HTTP_PORT: "8080"
+          QUARKUS_PROFILE: "prod"
 
 auto_deployments_enabled: true
 
