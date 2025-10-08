@@ -1,0 +1,73 @@
+name: CD - Build & Push to ECR (Main)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "pom.xml"
+      - "src/**"
+      - "src/main/docker/Dockerfile.jvm"
+      - ".github/workflows/push-ecr.yml"
+  workflow_dispatch:
+
+env:
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  IMAGE_SHA: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write   # necessario per OIDC
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: "maven"
+
+      - name: Build with Maven
+        run: ./mvnw -B -ntp package -DskipTests
+
+      - name: Configure AWS credentials (OIDC)
+        if: secrets.AWS_ROLE_TO_ASSUME != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # In alternativa, usa Access Keys:
+      # - name: Configure AWS credentials (Access Keys)
+      #   if: secrets.AWS_ROLE_TO_ASSUME == ''
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/main/docker/Dockerfile.jvm
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ env.REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_SHA }}
