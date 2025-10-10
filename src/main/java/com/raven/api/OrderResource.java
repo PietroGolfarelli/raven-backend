@@ -1,7 +1,6 @@
 package com.raven.api;
 
 import com.raven.api.dto.Order;
-import com.raven.api.repo.InMemoryStore;
 import com.raven.api.repo.InMemoryStore.CreateOrderRequest;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
@@ -14,19 +13,19 @@ import jakarta.ws.rs.core.Response;
 public class OrderResource {
 
     @Inject
-    InMemoryStore store;
+    com.raven.api.repo.OrdersRepository orders;
 
     @Inject
     OrderBroadcaster broadcaster;
 
     @GET
     public Response list() {
-        return Response.ok(store.list()).build();
+        return Response.ok(orders.list()).build();
     }
 
     @POST
     public Response create(CreateOrderRequest req) {
-        Order created = store.create(req);
+        Order created = orders.create(req);
         broadcaster.broadcast(created);
         return Response.status(Response.Status.CREATED).entity(created).build();
     }
@@ -41,7 +40,7 @@ public class OrderResource {
         if (req == null || req.status == null) {
             return Response.status(Response.Status.BAD_REQUEST).entity("Missing status").build();
         }
-        Order updated = store.updateStatus(id, req.status);
+        Order updated = orders.updateStatus(id, req.status);
         if (updated == null) {
             return Response.status(Response.Status.NOT_FOUND).build();
         }
