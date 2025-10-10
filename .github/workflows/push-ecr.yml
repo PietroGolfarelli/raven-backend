@@ -20,8 +20,9 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+
     permissions:
-      id-token: write
+      id-token: write   # necessario per OIDC
       contents: read
 
     steps:
@@ -38,7 +39,7 @@ jobs:
       - name: Build with Maven
         run: ./mvnw -B -ntp package -DskipTests
 
-      # OIDC (consigliato)
+      # OIDC (consigliato): usa questo se imposti il secret AWS_ROLE_TO_ASSUME
       - name: Configure AWS credentials (OIDC)
         if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
         uses: aws-actions/configure-aws-credentials@v4
@@ -46,7 +47,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Alternativa con Access Keys
+      # Alternativa con Access Keys (fallback): decommenta i secrets in repo/org
       - name: Configure AWS credentials (Access Keys)
         if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,6 +55,13 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # (Opzionale) Fai fallire esplicitamente se nessuna credenziale è configurata
+      - name: Fail if no AWS credentials
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' && (secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '') }}
+        run: |
+          echo "No AWS credentials configured. Set AWS_ROLE_TO_ASSUME for OIDC or provide AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
+          exit 1
 
       - name: Ensure ECR repository exists
         run: |
