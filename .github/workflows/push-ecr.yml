@@ -21,14 +21,8 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
-    # Mappo i secrets in env del job così posso usarli nelle condizioni if
-    env:
-      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
     permissions:
-      id-token: write   # necessario per OIDC
+      id-token: write
       contents: read
 
     steps:
@@ -45,29 +39,22 @@ jobs:
       - name: Build with Maven
         run: ./mvnw -B -ntp package -DskipTests
 
-      # OIDC (consigliato): usa questo se imposti il secret AWS_ROLE_TO_ASSUME
+      # OIDC (consigliato)
       - name: Configure AWS credentials (OIDC)
-        if: ${{ env.AWS_ROLE_TO_ASSUME != '' }}
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Alternativa con Access Keys (fallback)
+      # Alternativa con Access Keys
       - name: Configure AWS credentials (Access Keys)
-        if: ${{ env.AWS_ROLE_TO_ASSUME == '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      # Fai fallire esplicitamente se nessuna credenziale è configurata
-      - name: Fail if no AWS credentials
-        if: ${{ env.AWS_ROLE_TO_ASSUME == '' && (env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '') }}
-        run: |
-          echo "No AWS credentials configured. Set AWS_ROLE_TO_ASSUME for OIDC or provide AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY."
-          exit 1
 
       - name: Ensure ECR repository exists
         run: |
