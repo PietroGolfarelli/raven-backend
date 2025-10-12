@@ -111,19 +111,33 @@ public class CategoryRepository {
      */
     public List<Category> findAll() {
         try {
+            LOG.infof("Attempting to scan table: %s", tableName);
+            
             ScanRequest request = builder.buildScanRequest(tableName);
+            
+            LOG.debugf("Scan request built for table: %s", tableName);
+            
             ScanResponse response = dynamoDbClient.scan(request);
+            
+            LOG.infof("Scan successful for table: %s, scanned count: %d", 
+                tableName, response.count());
             
             List<Category> categories = new ArrayList<>();
             for (Map<String, AttributeValue> item : response.items()) {
                 categories.add(deserializer.deserialize(item, Category.class));
             }
             
-            LOG.infof("Found %d categories", categories.size());
+            LOG.infof("Found %d categories from table: %s", categories.size(), tableName);
             return categories;
             
         } catch (DynamoDbException e) {
-            LOG.errorf(e, "Error finding all categories");
+            LOG.errorf(e, "DynamoDB error finding all categories from table: %s. Error code: %s, Message: %s", 
+                tableName, 
+                e.awsErrorDetails() != null ? e.awsErrorDetails().errorCode() : "UNKNOWN",
+                e.getMessage());
+            throw new RuntimeException("Failed to find categories", e);
+        } catch (Exception e) {
+            LOG.errorf(e, "Unexpected error finding all categories from table: %s", tableName);
             throw new RuntimeException("Failed to find categories", e);
         }
     }

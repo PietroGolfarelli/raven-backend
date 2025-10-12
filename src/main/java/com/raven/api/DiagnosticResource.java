@@ -13,10 +13,15 @@ import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
+import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
 import software.amazon.awssdk.services.dynamodb.model.ListTablesRequest;
 import software.amazon.awssdk.services.dynamodb.model.ListTablesResponse;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -71,24 +76,74 @@ public class DiagnosticResource {
             envVars.put("AWS_PROFILE", System.getenv("AWS_PROFILE"));
             diagnosticInfo.put("environment", envVars);
             
-            // Test DynamoDB connection
+            // Test DynamoDB connection and check required tables
+            // Using describeTable() instead of listTables() because:
+            // 1. listTables() requires dynamodb:ListTables permission (global)
+            // 2. describeTable() requires dynamodb:DescribeTable permission (table-specific)
+            // 3. IAM policies often grant table-specific permissions but not global ListTables
             try {
-                ListTablesRequest request = ListTablesRequest.builder().limit(10).build();
-                ListTablesResponse response = dynamoDbClient.listTables(request);
-                
                 diagnosticInfo.put("dynamoDbConnection", "SUCCESS");
-                diagnosticInfo.put("tablesFound", response.tableNames());
-                diagnosticInfo.put("tableCount", response.tableNames().size());
                 
-                // Check if required tables exist
-                Map<String, Boolean> requiredTables = new HashMap<>();
-                requiredTables.put(categoriesTable, response.tableNames().contains(categoriesTable));
-                requiredTables.put(productsTable, response.tableNames().contains(productsTable));
-                requiredTables.put(ordersTable, response.tableNames().contains(ordersTable));
-                diagnosticInfo.put("requiredTables", requiredTables);
+                // Check each required table using describeTable
+                Map<String, Object> tableChecks = new HashMap<>();
+                List<String> existingTables = new ArrayList<>();
+                List<String> missingTables = new ArrayList<>();
                 
-                boolean allTablesExist = requiredTables.values().stream().allMatch(exists -> exists);
-                diagnosticInfo.put("allRequiredTablesExist", allTablesExist);
+                String[] requiredTableNames = {categoriesTable, productsTable, ordersTable};
+                
+                for (String tableName : requiredTableNames) {
+                    try {
+                        DescribeTableRequest request = DescribeTableRequest.builder()
+                            .tableName(tableName)
+                            .build();
+                        
+                        DescribeTableResponse response = dynamoDbClient.describeTable(request);
+                        
+                        Map<String, Object> tableInfo = new HashMap<>();
+                        tableInfo.put("exists", true);
+                        tableInfo.put("status", response.table().tableStatus().toString());
+                        tableInfo.put("itemCount", response.table().itemCount());
+                        tableInfo.put("tableSizeBytes", response.table().tableSizeBytes());
+                        tableInfo.put("creationDateTime", response.table().creationDateTime().toString());
+                        
+                        tableChecks.put(tableName, tableInfo);
+                        existingTables.add(tableName);
+                        
+                        LOG.infof("Table %s exists with status: %s", tableName, response.table().tableStatus());
+                        
+                    } catch (DynamoDbException e) {
+                        Map<String, Object> tableInfo = new HashMap<>();
+                        tableInfo.put("exists", false);
+                        tableInfo.put("error", e.getMessage());
+                        tableInfo.put("errorCode", e.awsErrorDetails() != null ? 
+                            e.awsErrorDetails().errorCode() : "UNKNOWN");
+                        
+                        tableChecks.put(tableName, tableInfo);
+                        missingTables.add(tableName);
+                        
+                        LOG.errorf("Table %s check failed: %s", tableName, e.getMessage());
+                    }
+                }
+                
+                diagnosticInfo.put("tableChecks", tableChecks);
+                diagnosticInfo.put("existingTables", existingTables);
+                diagnosticInfo.put("missingTables", missingTables);
+                diagnosticInfo.put("tableCount", existingTables.size());
+                diagnosticInfo.put("allRequiredTablesExist", missingTables.isEmpty());
+                
+                // Try listTables as well (may fail if permission not granted)
+                try {
+                    ListTablesRequest listRequest = ListTablesRequest.builder().limit(10).build();
+                    ListTablesResponse listResponse = dynamoDbClient.listTables(listRequest);
+                    diagnosticInfo.put("listTablesPermission", "GRANTED");
+                    diagnosticInfo.put("allTablesInAccount", listResponse.tableNames());
+                    LOG.info("ListTables permission is available");
+                } catch (DynamoDbException e) {
+                    diagnosticInfo.put("listTablesPermission", "DENIED");
+                    diagnosticInfo.put("listTablesNote", 
+                        "IAM user doesn't have dynamodb:ListTables permission. This is OK - table operations will still work.");
+                    LOG.warnf("ListTables permission denied: %s. This is expected with limited IAM permissions.", e.getMessage());
+                }
                 
             } catch (Exception e) {
                 LOG.error("Failed to connect to DynamoDB", e);
@@ -118,13 +173,17 @@ public class DiagnosticResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response checkDynamoDbHealth() {
         try {
-            ListTablesRequest request = ListTablesRequest.builder().limit(1).build();
-            dynamoDbClient.listTables(request);
+            // Try to describe one of our tables instead of listTables
+            DescribeTableRequest request = DescribeTableRequest.builder()
+                .tableName(categoriesTable)
+                .build();
+            dynamoDbClient.describeTable(request);
             
             return Response.ok(Map.of(
                 "status", "UP",
                 "service", "DynamoDB",
-                "region", awsRegion
+                "region", awsRegion,
+                "testTable", categoriesTable
             )).build();
             
         } catch (Exception e) {
@@ -137,6 +196,90 @@ public class DiagnosticResource {
                 ))
                 .build();
         }
+    }
+    
+    /**
+     * Test direct access to specific tables
+     * This endpoint helps diagnose table access issues
+     */
+    @GET
+    @Path("/test-table-access")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response testTableAccess() {
+        LOG.info("Testing direct table access");
+        
+        Map<String, Object> results = new HashMap<>();
+        results.put("timestamp", java.time.Instant.now().toString());
+        
+        Map<String, Object> tableTests = new HashMap<>();
+        
+        // Test each table with describeTable and a sample scan
+        String[] tables = {categoriesTable, productsTable, ordersTable};
+        
+        for (String tableName : tables) {
+            Map<String, Object> tableResult = new HashMap<>();
+            
+            // Test 1: DescribeTable
+            try {
+                DescribeTableRequest descRequest = DescribeTableRequest.builder()
+                    .tableName(tableName)
+                    .build();
+                DescribeTableResponse descResponse = dynamoDbClient.describeTable(descRequest);
+                
+                tableResult.put("describeTable", "SUCCESS");
+                tableResult.put("tableStatus", descResponse.table().tableStatus().toString());
+                tableResult.put("itemCount", descResponse.table().itemCount());
+                
+            } catch (DynamoDbException e) {
+                tableResult.put("describeTable", "FAILED");
+                tableResult.put("describeTableError", e.getMessage());
+                tableResult.put("errorCode", e.awsErrorDetails() != null ? 
+                    e.awsErrorDetails().errorCode() : "UNKNOWN");
+            }
+            
+            // Test 2: Scan (limited to 1 item)
+            try {
+                software.amazon.awssdk.services.dynamodb.model.ScanRequest scanRequest = 
+                    software.amazon.awssdk.services.dynamodb.model.ScanRequest.builder()
+                        .tableName(tableName)
+                        .limit(1)
+                        .build();
+                
+                software.amazon.awssdk.services.dynamodb.model.ScanResponse scanResponse = 
+                    dynamoDbClient.scan(scanRequest);
+                
+                tableResult.put("scanOperation", "SUCCESS");
+                tableResult.put("scannedCount", scanResponse.count());
+                tableResult.put("hasItems", scanResponse.count() > 0);
+                
+            } catch (DynamoDbException e) {
+                tableResult.put("scanOperation", "FAILED");
+                tableResult.put("scanError", e.getMessage());
+                tableResult.put("scanErrorCode", e.awsErrorDetails() != null ? 
+                    e.awsErrorDetails().errorCode() : "UNKNOWN");
+                LOG.errorf("Scan failed for table %s: %s", tableName, e.getMessage());
+            }
+            
+            tableTests.put(tableName, tableResult);
+        }
+        
+        results.put("tableAccessTests", tableTests);
+        
+        // Summary
+        long successfulTables = tableTests.values().stream()
+            .filter(t -> {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> test = (Map<String, Object>) t;
+                return "SUCCESS".equals(test.get("describeTable")) && 
+                       "SUCCESS".equals(test.get("scanOperation"));
+            })
+            .count();
+        
+        results.put("successfulTables", successfulTables);
+        results.put("totalTables", tables.length);
+        results.put("allTablesAccessible", successfulTables == tables.length);
+        
+        return Response.ok(results).build();
     }
     
     /**
