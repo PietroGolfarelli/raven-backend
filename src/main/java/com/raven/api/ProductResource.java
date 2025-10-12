@@ -14,10 +14,10 @@ import java.util.List;
 public class ProductResource {
 
     @Inject
-    com.raven.api.repo.CatalogRepository catalog;
+    InMemoryStore store;
 
     @GET
-    public java.util.List<com.raven.api.repo.InMemoryStore.Product> list() {
-        return catalog.listProducts();
+    public List<InMemoryStore.Product> list() {
+        return store.getProducts();
     }
 }
